@@ -19,15 +19,36 @@
     more: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="12" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="19" cy="12" r="1.3"/></svg>',
     pin: '<svg viewBox="0 0 24 24" width="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s-7-6.1-7-11a7 7 0 1 1 14 0c0 4.9-7 11-7 11Z"/><circle cx="12" cy="10" r="2.5"/></svg>',
     plus: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>',
+    bell: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 1 1 12 0c0 4 1.5 5.5 2 6.5H4c.5-1 2-2.5 2-6.5Z"/><path d="M9.5 18a2.5 2.5 0 0 0 5 0"/></svg>',
+    note: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h9l5 5v11a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z"/><path d="M14 3v5h5M8 13h8M8 17h5"/></svg>',
+    bookmark: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h12v18l-6-4-6 4Z"/></svg>',
+    clock: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>',
   };
 
   const TASK_ICON = { call: ICONS.call, link: ICONS.link, calendar: ICONS.calendar, plain: ICONS.dot };
+
+  const TYPE_META = {
+    task: { icon: ICONS.circle, label: 'Task' },
+    reminder: { icon: ICONS.bell, label: 'Reminder' },
+    event: { icon: ICONS.calendar, label: 'Event' },
+    note: { icon: ICONS.note, label: 'Note' },
+    saved: { icon: ICONS.bookmark, label: 'Saved for later' },
+    recurring: { icon: ICONS.repeat, label: 'Recurring' },
+  };
+  const ALL_TYPES = ['task', 'reminder', 'event', 'note', 'saved', 'recurring'];
 
   /* ---------- state ---------- */
   const nextId = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
 
   /* ---------- persistence (saved in this browser only) ---------- */
-  const STORAGE = { tasks: 'daybase:tasks', topThree: 'daybase:topThree', todayStats: 'daybase:todayStats' };
+  const STORAGE = {
+    tasks: 'daybase:tasks',
+    topThree: 'daybase:topThree',
+    todayStats: 'daybase:todayStats',
+    savedForLater: 'daybase:savedForLater',
+    customEvents: 'daybase:customEvents',
+    recurring: 'daybase:recurring',
+  };
 
   function loadJSON(key, fallback) {
     try {
@@ -60,6 +81,16 @@
     { id: nextId(), title: 'Renew car insurance', category: 'home', icon: 'plain', due: 'Overdue', warn: true, done: false },
   ];
 
+  const DEFAULT_SAVED_FOR_LATER = [
+    { id: nextId(), title: 'Compare energy tariffs', isNote: false },
+    { id: nextId(), title: 'Easy weeknight dinners', isNote: false },
+  ];
+
+  const DEFAULT_RECURRING = [
+    { title: 'Bins out', freq: 'Every Wednesday' },
+    { title: 'Water the plants', freq: 'Every Sunday' },
+  ];
+
   const state = {
     topThree: loadJSON(STORAGE.topThree, DEFAULT_TOP_THREE),
     found: [
@@ -68,10 +99,9 @@
       { id: nextId(), source: 'calendar', title: 'Two events overlap on Thursday', body: 'Team sync and the Lisbon call both start at 3 PM' },
     ],
     tasks: loadJSON(STORAGE.tasks, DEFAULT_TASKS),
-    recurring: [
-      { title: 'Bins out', freq: 'Every Wednesday' },
-      { title: 'Water the plants', freq: 'Every Sunday' },
-    ],
+    recurring: loadJSON(STORAGE.recurring, DEFAULT_RECURRING),
+    savedForLater: loadJSON(STORAGE.savedForLater, DEFAULT_SAVED_FOR_LATER),
+    customEvents: loadJSON(STORAGE.customEvents, []),
     filters: { category: 'all', source: 'all', search: '' },
     dayIndex: 0,
     theme: localStorage.getItem('daybase:theme') || 'classic',
@@ -124,6 +154,112 @@
   $$('[data-view]').forEach((el) => {
     el.addEventListener('click', () => setActiveView(el.dataset.view));
   });
+
+  /* =====================================================================
+     NATURAL-LANGUAGE CAPTURE PARSER
+
+     Deterministic, transparent, entirely client-side. No AI or external
+     service is involved — this is a fixed set of regex/keyword rules that
+     look for explicit cues (a time, a weekday, "remember to…", "every…")
+     and strip them out of the typed text to build a clean title. Where a
+     phrase gives no strong signal either way (a date with no verb and no
+     other cue), confidence is marked 'low' so the UI can offer a couple
+     of alternate readings instead of silently guessing.
+     ===================================================================== */
+  const TASK_VERBS =
+    /^(call|email|text|message|buy|get|pick up|book|pay|clean|finish|review|send|write|read|renew|water|cancel|schedule|order|fix|return|drop off|walk|feed|collect|submit|file|chase|confirm|cook|pack|print|update|prepare|organi[sz]e|check|find|research|plan)\b/i;
+
+  const WEEKDAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
+
+  function capWord(s) {
+    return s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();
+  }
+
+  function formatClockTime(hour, minutes, period) {
+    const min = minutes ? minutes.slice(1) : '00';
+    if (!period) return `${parseInt(hour, 10)}:${min}`;
+    let h = parseInt(hour, 10);
+    if (h === 0) h = 12;
+    if (h > 12) h -= 12;
+    return `${h}:${min} ${period.toUpperCase()}`;
+  }
+
+  function parseCapture(raw) {
+    let title = raw.trim();
+    let due = null;
+    let time = null;
+    let recurring = null;
+
+    const take = (regex) => {
+      const lower = title.toLowerCase();
+      const found = lower.match(regex);
+      if (!found) return null;
+      const idx = lower.indexOf(found[0]);
+      title = (title.slice(0, idx) + title.slice(idx + found[0].length)).replace(/\s{2,}/g, ' ').trim();
+      return found;
+    };
+
+    let m;
+    const weekdayPattern = WEEKDAYS.join('|');
+    if ((m = take(new RegExp(`\\bevery\\s+(${weekdayPattern})\\b`)))) {
+      recurring = `Every ${capWord(m[1])}`;
+    } else if ((m = take(/\bevery\s+(day|week|month|year)\b/))) {
+      recurring = `Every ${m[1]}`;
+    } else if ((m = take(/\b(daily|weekly|monthly|yearly)\b/))) {
+      recurring = { daily: 'Every day', weekly: 'Every week', monthly: 'Every month', yearly: 'Every year' }[m[1]];
+    }
+
+    let reminderCue = false;
+    let savedCue = false;
+    if (/^(remember to|remind me to|don't forget to|dont forget to)\b/i.test(title)) {
+      reminderCue = true;
+      title = title.replace(/^(remember to|remind me to|don't forget to|dont forget to)\s*/i, '').trim();
+    } else if (/^(look at this later|read this later|read later|check this out later|save this for later|save for later)\b/i.test(title)) {
+      savedCue = true;
+    }
+
+    if ((m = take(/\bat\s+(\d{1,2})(:\d{2})?\s*(am|pm)?\b/))) {
+      time = formatClockTime(m[1], m[2], m[3]);
+    } else if ((m = take(/\b(\d{1,2})(:\d{2})?\s*(am|pm)\b/))) {
+      time = formatClockTime(m[1], m[2], m[3]);
+    }
+
+    if ((m = take(/\btoday\b/))) due = 'Today';
+    else if ((m = take(/\btomorrow\b/))) due = 'Tomorrow';
+    else if ((m = take(/\bnext week\b/))) due = 'Next week';
+    else if ((m = take(/\bnext month\b/))) due = 'Next month';
+    else if ((m = take(new RegExp(`\\bnext\\s+(${weekdayPattern})\\b`)))) due = `Next ${capWord(m[1])}`;
+    else if ((m = take(new RegExp(`\\b(${weekdayPattern})\\b`)))) due = capWord(m[1]);
+
+    title = title.replace(/\s{2,}/g, ' ').replace(/^[\s,.\-]+|[\s,.\-]+$/g, '').trim();
+    if (savedCue || !title) title = raw.trim();
+    title = title.charAt(0).toUpperCase() + title.slice(1);
+
+    let type;
+    let confidence = 'high';
+    let altTypes = [];
+    const hasVerb = TASK_VERBS.test(title);
+
+    if (recurring) {
+      type = 'recurring';
+    } else if (reminderCue) {
+      type = 'reminder';
+    } else if (savedCue) {
+      type = 'saved';
+    } else if (time) {
+      type = 'event';
+    } else if (hasVerb) {
+      type = 'task';
+    } else if (due) {
+      type = 'note';
+      confidence = 'low';
+      altTypes = ['event', 'task'];
+    } else {
+      type = 'note';
+    }
+
+    return { title, type, due, time, recurring, confidence, altTypes };
+  }
 
   /* ---------- today: derived views over the real task/event data ---------- */
   function getTodaysTasks() {
@@ -185,7 +321,7 @@
 
     const overdue = getOverdueTasks().length;
     const openToday = getTodaysTasks().filter((t) => !t.done).length;
-    const eventsToday = TODAY_EVENTS.length;
+    const eventsToday = getEventsForDay(0).length;
     const openTasks = openToday + state.topThree.length;
     const totalLoad = openTasks + eventsToday;
     const hasDoneSomething = state.todayStats && state.todayStats.done > 0;
@@ -307,11 +443,18 @@
   function buildTaskRow(task) {
     const row = document.createElement('div');
     row.className = 'task-row' + (task.done ? ' done' : '');
-    const iconKey = task.done ? 'plain' : task.icon;
-    const showAction = !task.done && task.icon !== 'plain';
+    const kindClass = task.kind === 'reminder' ? 'reminder' : task.kind === 'recurring' ? 'recurring' : task.icon !== 'plain' ? task.icon : '';
+    const leadingIcon = task.done
+      ? ICONS.check
+      : task.kind === 'reminder'
+      ? ICONS.bell
+      : task.kind === 'recurring'
+      ? ICONS.repeat
+      : TASK_ICON[task.icon] || ICONS.dot;
+    const showAction = !task.done && task.icon !== 'plain' && !task.kind;
     row.innerHTML = `
-      <button class="task-icon ${task.icon !== 'plain' ? task.icon : ''}" type="button" data-id="${task.id}" aria-label="Toggle done">
-        ${task.done ? ICONS.check : TASK_ICON[iconKey]}
+      <button class="task-icon ${kindClass}" type="button" data-id="${task.id}" aria-label="Toggle done">
+        ${leadingIcon}
       </button>
       <div class="task-copy">
         <strong>${task.title}</strong>
@@ -365,9 +508,15 @@
     $('#today-tasks-count').textContent = `${items.filter((t) => !t.done).length} open`;
   }
 
+  function getUpcomingEvents() {
+    return state.customEvents.filter((e) => resolveDueToDayIndex(e.due) === null);
+  }
+
   function renderUpcoming() {
     const block = $('#upcoming-block');
-    const items = getUpcomingTasks();
+    const taskItems = getUpcomingTasks().map((t) => ({ id: t.id, title: t.title, due: t.due, icon: TASK_ICON[t.icon] || ICONS.dot, kind: 'task' }));
+    const eventItems = getUpcomingEvents().map((e) => ({ id: e.id, title: e.title, due: e.due, icon: ICONS.calendar, kind: 'event' }));
+    const items = [...taskItems, ...eventItems];
     if (!items.length) {
       block.hidden = true;
       return;
@@ -376,15 +525,15 @@
     const list = $('#upcoming-list');
     list.innerHTML = items
       .map(
-        (t) => `
-      <button type="button" class="recurring-row" data-id="${t.id}">
-        ${TASK_ICON[t.icon] || ICONS.dot}
-        <span><strong>${t.title}</strong><small>${t.due}</small></span>
+        (it) => `
+      <button type="button" class="recurring-row" data-id="${it.id}" data-kind="${it.kind}">
+        ${it.icon}
+        <span><strong>${it.title}</strong><small>${it.due}</small></span>
       </button>`
       )
       .join('');
     $$('.recurring-row', list).forEach((row) => {
-      row.addEventListener('click', () => setActiveView('tasks'));
+      row.addEventListener('click', () => setActiveView(row.dataset.kind === 'event' ? 'calendar' : 'tasks'));
     });
   }
 
@@ -402,9 +551,10 @@
     if (task.done) showToast('Nice — marked done.');
   }
 
-  function addTask(title, { category = 'general', due = null } = {}) {
-    if (!title.trim()) return;
+  function addTask(title, { category = 'general', due = null, kind = null } = {}) {
+    if (!title.trim()) return null;
     const task = { id: nextId(), title: title.trim(), category, icon: 'plain', due, done: false };
+    if (kind) task.kind = kind;
     state.tasks.unshift(task);
     saveJSON(STORAGE.tasks, state.tasks);
     if (task.category === 'today' || task.due === 'Today') growTodayTotal(1);
@@ -412,6 +562,87 @@
     renderTodayTasks();
     renderUpcoming();
     renderGreeting();
+    return task;
+  }
+
+  function addCustomEvent({ title, due, time }) {
+    const ev = { id: nextId(), title, due: due || 'Today', time: time || null };
+    state.customEvents.unshift(ev);
+    saveJSON(STORAGE.customEvents, state.customEvents);
+    renderTodayTimeline();
+    renderAgenda();
+    renderUpcoming();
+    renderGreeting();
+    return ev;
+  }
+
+  function addSavedItem(title, { isNote = false } = {}) {
+    const item = { id: nextId(), title, isNote };
+    state.savedForLater.unshift(item);
+    saveJSON(STORAGE.savedForLater, state.savedForLater);
+    renderSavedForLater();
+    return item;
+  }
+
+  function renderSavedForLater() {
+    const list = $('#saved-for-later-list');
+    if (!list) return;
+    if (!state.savedForLater.length) {
+      list.innerHTML = `<p class="aside-empty">Nothing saved yet.</p>`;
+      return;
+    }
+    list.innerHTML = state.savedForLater
+      .map((item) => `<a href="#" data-id="${item.id}">${item.title} ${ICONS.chevronRight}</a>`)
+      .join('');
+    $$('#saved-for-later-list a').forEach((a) => {
+      a.addEventListener('click', (e) => {
+        e.preventDefault();
+        showToast('Opening saved items is coming soon');
+      });
+    });
+  }
+
+  /* ---------- turning a parsed capture into something real ---------- */
+  function commitCapture(parsed, type) {
+    let landedMessage;
+    switch (type) {
+      case 'recurring': {
+        const due = parsed.due || null;
+        addTask(parsed.title, { category: due === 'Today' ? 'today' : 'general', due, kind: 'recurring' });
+        state.recurring.unshift({ title: parsed.title, freq: parsed.recurring || 'Repeats' });
+        saveJSON(STORAGE.recurring, state.recurring);
+        renderRecurring();
+        landedMessage = `Added as recurring — ${parsed.recurring || 'repeats'}`;
+        break;
+      }
+      case 'reminder': {
+        const due = parsed.due || 'No date';
+        addTask(parsed.title, { category: due === 'Today' ? 'today' : 'general', due, kind: 'reminder' });
+        landedMessage = 'Added as a reminder';
+        break;
+      }
+      case 'event': {
+        addCustomEvent({ title: parsed.title, due: parsed.due || 'Today', time: parsed.time });
+        landedMessage = parsed.due && parsed.due !== 'Today' ? `Added to your calendar — ${parsed.due}` : 'Added to today’s calendar';
+        break;
+      }
+      case 'saved': {
+        addSavedItem(parsed.title);
+        landedMessage = 'Saved for later';
+        break;
+      }
+      case 'note': {
+        addSavedItem(parsed.title, { isNote: true });
+        landedMessage = 'Saved as a note';
+        break;
+      }
+      default: {
+        const due = parsed.due || 'No date';
+        addTask(parsed.title, { category: due === 'Today' ? 'today' : 'general', due });
+        landedMessage = parsed.due ? `Added to your tasks — ${parsed.due}` : 'Added to your tasks';
+      }
+    }
+    return { type, landedMessage };
   }
 
   $$('#category-filters button').forEach((btn) => {
@@ -430,17 +661,48 @@
   $('#task-options-toggle').addEventListener('click', () => {
     const panel = $('#task-options');
     panel.hidden = !panel.hidden;
+    renderTaskComposerHint();
   });
+
+  function renderTaskComposerHint() {
+    const hintEl = $('#task-composer-hint');
+    const input = $('#task-input');
+    const optionsOpen = !$('#task-options').hidden;
+    if (optionsOpen || !input.value.trim()) {
+      hintEl.hidden = true;
+      return;
+    }
+    const parsed = parseCapture(input.value);
+    const meta = TYPE_META[parsed.type];
+    const bits = [meta.label];
+    if (parsed.due) bits.push(parsed.due);
+    if (parsed.time) bits.push(parsed.time);
+    if (parsed.recurring) bits.push(parsed.recurring);
+    hintEl.hidden = false;
+    hintEl.textContent = `Detected: ${bits.join(' · ')}`;
+  }
+
+  $('#task-input').addEventListener('input', renderTaskComposerHint);
 
   function submitTaskComposer() {
     const input = $('#task-input');
-    const due = $('#task-due').value;
-    const category = $('#task-category').value === 'general' ? 'general' : $('#task-category').value;
     if (!input.value.trim()) return;
-    addTask(input.value, { category, due: due ? formatDueDate(due) : 'No date' });
+    const optionsOpen = !$('#task-options').hidden;
+
+    if (optionsOpen) {
+      const due = $('#task-due').value;
+      const category = $('#task-category').value === 'general' ? 'general' : $('#task-category').value;
+      addTask(input.value, { category, due: due ? formatDueDate(due) : 'No date' });
+      showToast('Task added');
+    } else {
+      const parsed = parseCapture(input.value);
+      const result = commitCapture(parsed, parsed.type);
+      showToast(result.landedMessage);
+    }
+
     input.value = '';
     $('#task-due').value = '';
-    showToast('Task added');
+    renderTaskComposerHint();
   }
 
   function formatDueDate(iso) {
@@ -453,17 +715,142 @@
     if (e.key === 'Enter') submitTaskComposer();
   });
 
-  function submitQuickAdd() {
-    const input = $('#quick-add-input');
-    if (!input.value.trim()) return;
-    addTask(input.value, { category: 'today', due: 'Today' });
-    input.value = '';
-    showToast('Added to today');
+  /* ---------- smart capture panel (Today) ---------- */
+  let captureOverrideType = null;
+
+  function renderCaptureChips(parsed, currentType) {
+    const meta = TYPE_META[currentType];
+    const parts = [`<button type="button" class="capture-chip capture-chip-type" id="capture-chip-type">${meta.icon}${meta.label}</button>`];
+    if (parsed.due) parts.push(`<span class="capture-chip">${parsed.due}</span>`);
+    if (parsed.time) parts.push(`<span class="capture-chip">${ICONS.clock}${parsed.time}</span>`);
+    if (parsed.recurring) parts.push(`<span class="capture-chip">${parsed.recurring}</span>`);
+    return parts.join('');
   }
 
-  $('#quick-add-submit').addEventListener('click', submitQuickAdd);
+  function renderCaptureAlt(parsed, currentType, forceShow) {
+    const altEl = $('#capture-alt');
+    const shouldShow = forceShow || parsed.confidence === 'low';
+    if (!shouldShow) {
+      altEl.hidden = true;
+      altEl.innerHTML = '';
+      return;
+    }
+    const pool = parsed.altTypes && parsed.altTypes.length ? parsed.altTypes : ALL_TYPES;
+    const candidates = pool.filter((t) => t !== currentType).slice(0, 3);
+    altEl.hidden = false;
+    altEl.innerHTML =
+      `<span class="capture-alt-label">Not quite — this is:</span>` +
+      candidates.map((t) => `<button type="button" class="capture-alt-btn" data-type="${t}">${TYPE_META[t].icon}${TYPE_META[t].label}</button>`).join('');
+    $$('.capture-alt-btn', altEl).forEach((btn) => {
+      btn.addEventListener('click', () => {
+        captureOverrideType = btn.dataset.type;
+        updateCapturePreview();
+        $('#quick-add-input').focus();
+      });
+    });
+  }
+
+  function updateCapturePreview() {
+    const input = $('#quick-add-input');
+    const value = input.value;
+    const examplesEl = $('#capture-examples');
+    const detectedEl = $('#capture-detected');
+
+    if (!value.trim()) {
+      examplesEl.hidden = false;
+      detectedEl.hidden = true;
+      $('#capture-alt').hidden = true;
+      return;
+    }
+    const parsed = parseCapture(value);
+    const type = captureOverrideType || parsed.type;
+    examplesEl.hidden = true;
+    detectedEl.hidden = false;
+    $('#capture-chips').innerHTML = renderCaptureChips(parsed, type);
+    const typeChip = $('#capture-chip-type');
+    if (typeChip) {
+      typeChip.addEventListener('click', () => {
+        const altEl = $('#capture-alt');
+        renderCaptureAlt(parsed, type, altEl.hidden);
+        $('#quick-add-input').focus();
+      });
+    }
+    renderCaptureAlt(parsed, type, false);
+  }
+
+  function submitCapture() {
+    const input = $('#quick-add-input');
+    const value = input.value;
+    if (!value.trim()) return;
+    const parsed = parseCapture(value);
+    const type = captureOverrideType || parsed.type;
+    const result = commitCapture(parsed, type);
+
+    $('#capture-detected').hidden = true;
+    $('#capture-alt').hidden = true;
+    $('#capture-done-label').textContent = result.landedMessage;
+    $('#capture-done').hidden = false;
+
+    input.value = '';
+    captureOverrideType = null;
+
+    setTimeout(() => {
+      $('#capture-done').hidden = true;
+      updateCapturePreview();
+    }, 1100);
+  }
+
+  $('#quick-add-submit').addEventListener('click', submitCapture);
+  $('#quick-add-input').addEventListener('input', () => {
+    captureOverrideType = null;
+    updateCapturePreview();
+  });
+  $('#quick-add-input').addEventListener('focus', () => {
+    $('#capture-panel').hidden = false;
+    updateCapturePreview();
+  });
+  $('#quick-add-input').addEventListener('blur', () => {
+    setTimeout(() => {
+      const active = document.activeElement;
+      if (active === $('#quick-add-input')) return;
+      if (active && active.closest && active.closest('#capture-panel')) return;
+      $('#capture-panel').hidden = true;
+    }, 120);
+  });
   $('#quick-add-input').addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') submitQuickAdd();
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      submitCapture();
+    } else if (e.key === 'Escape') {
+      const input = e.target;
+      if (input.value) {
+        input.value = '';
+        captureOverrideType = null;
+        updateCapturePreview();
+      } else {
+        input.blur();
+      }
+    }
+  });
+  $$('.capture-example').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const input = $('#quick-add-input');
+      input.value = btn.textContent;
+      input.focus();
+      captureOverrideType = null;
+      updateCapturePreview();
+    });
+  });
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== '/' || e.metaKey || e.ctrlKey || e.altKey) return;
+    const active = document.activeElement;
+    const isTyping = active && /^(input|textarea|select)$/i.test(active.tagName);
+    if (isTyping) return;
+    e.preventDefault();
+    setActiveView('today');
+    const input = $('#quick-add-input');
+    input.focus();
   });
 
   function renderRecurring() {
@@ -488,6 +875,7 @@
 
   /* ---------- calendar ---------- */
   const WEEKDAY_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const WEEKDAY_FULL = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
 
   function buildDays() {
     const days = [];
@@ -500,6 +888,29 @@
     return days;
   }
   const DAYS = buildDays();
+
+  function resolveDueToDayIndex(due) {
+    if (!due) return null;
+    const d = due.toLowerCase();
+    if (d === 'today') return 0;
+    if (d === 'tomorrow') return 1;
+    if (d.startsWith('next ')) return null;
+    const target = WEEKDAY_FULL.indexOf(d);
+    if (target === -1) return null;
+    for (let i = 1; i < DAYS.length; i++) {
+      if (DAYS[i].getDay() === target) return i;
+    }
+    return null;
+  }
+
+  function getEventsForDay(dayIndex) {
+    const events = [];
+    if (dayIndex === 0) events.push(...TODAY_EVENTS);
+    state.customEvents.forEach((e) => {
+      if (resolveDueToDayIndex(e.due) === dayIndex) events.push(e);
+    });
+    return events;
+  }
 
   function renderDaySelector() {
     const wrap = $('#day-selector');
@@ -519,47 +930,53 @@
 
   function renderTodayTimeline() {
     const list = $('#today-timeline-list');
+    const events = getEventsForDay(0);
     const countEl = $('#today-events-count');
-    if (countEl) countEl.textContent = `${TODAY_EVENTS.length} commitment${TODAY_EVENTS.length === 1 ? '' : 's'}`;
-    if (!TODAY_EVENTS.length) {
+    if (countEl) countEl.textContent = `${events.length} commitment${events.length === 1 ? '' : 's'}`;
+    if (!events.length) {
       list.innerHTML = `<div class="calm-empty">${ICONS.calendar}<strong>No commitments today</strong><span>Your calendar is clear.</span></div>`;
       return;
     }
-    list.innerHTML = TODAY_EVENTS.map(
-      (ev) => `
+    list.innerHTML = events
+      .map(
+        (ev) => `
       <div class="timeline-event">
-        <time>${ev.time}<span>${ev.untilLabel}</span></time>
+        <time>${ev.time || ''}${ev.untilLabel ? `<span>${ev.untilLabel}</span>` : ''}</time>
         <div class="timeline-line"></div>
         <div>
           <strong>${ev.title}</strong>
-          <small>${ev.location}</small>
-          <a href="#">${ICONS.pin}${ev.directionsLabel}</a>
+          ${ev.location ? `<small>${ev.location}</small>` : ''}
+          ${ev.directionsLabel ? `<a href="#">${ICONS.pin}${ev.directionsLabel}</a>` : ''}
         </div>
       </div>`
-    ).join('');
+      )
+      .join('');
   }
 
   function renderAgenda() {
     const isToday = state.dayIndex === 0;
     $('#agenda-day-title').textContent = isToday ? 'Today' : WEEKDAY_SHORT[DAYS[state.dayIndex].getDay()];
+    const events = getEventsForDay(state.dayIndex);
     const list = $('#agenda-list');
-    if (!isToday) {
+    if (!events.length) {
       $('#agenda-count').textContent = '0 events';
       list.innerHTML = `<div class="calm-empty">${ICONS.calendar}<strong>Nothing scheduled</strong><span>Enjoy the space in your day.</span></div>`;
       return;
     }
-    $('#agenda-count').textContent = `${TODAY_EVENTS.length} event${TODAY_EVENTS.length === 1 ? '' : 's'}`;
-    list.innerHTML = TODAY_EVENTS.map(
-      (ev) => `
+    $('#agenda-count').textContent = `${events.length} event${events.length === 1 ? '' : 's'}`;
+    list.innerHTML = events
+      .map(
+        (ev) => `
       <article>
-        <time>${ev.time}<span>${ev.duration}</span></time>
+        <time>${ev.time || ''}${ev.duration ? `<span>${ev.duration}</span>` : ''}</time>
         <div>
           <strong>${ev.title}</strong>
-          <small>${ev.location}</small>
-          <a href="#">${ICONS.pin}<span>${ev.directionsLabel}</span></a>
+          ${ev.location ? `<small>${ev.location}</small>` : ''}
+          ${ev.directionsLabel ? `<a href="#">${ICONS.pin}<span>${ev.directionsLabel}</span></a>` : ''}
         </div>
       </article>`
-    ).join('');
+      )
+      .join('');
   }
 
   $('.calendar-add').addEventListener('click', () => showToast('Add-to-calendar coming soon'));
@@ -707,6 +1124,7 @@
     renderFoundView();
     renderTasks();
     renderRecurring();
+    renderSavedForLater();
     renderDaySelector();
     renderAgenda();
     renderThemeGrid();

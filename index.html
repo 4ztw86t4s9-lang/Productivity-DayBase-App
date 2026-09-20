@@ -44,14 +44,36 @@
         <div class="today-progress-track"><div class="today-progress-fill" id="today-progress-bar"></div></div>
       </div>
 
-      <div class="quick-capture">
-        <input type="text" id="quick-add-input" placeholder="Add something for today…" autocomplete="off">
-        <button type="button" id="quick-add-submit" class="quick-capture-submit" aria-label="Add task">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
-        </button>
-        <button type="button" id="voice-trigger" class="quick-capture-mic voice-orb" aria-label="Tell Daybase">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3Z"/><path d="M19 11a7 7 0 0 1-14 0"/><path d="M12 18v3"/></svg>
-        </button>
+      <div class="capture" id="capture">
+        <div class="quick-capture" id="quick-capture-bar">
+          <input type="text" id="quick-add-input" placeholder="Call the dentist tomorrow at 10…" autocomplete="off">
+          <button type="button" id="quick-add-submit" class="quick-capture-submit" aria-label="Add">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+          </button>
+          <button type="button" id="voice-trigger" class="quick-capture-mic voice-orb" aria-label="Tell Daybase">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3Z"/><path d="M19 11a7 7 0 0 1-14 0"/><path d="M12 18v3"/></svg>
+          </button>
+        </div>
+
+        <div class="capture-panel" id="capture-panel" hidden>
+          <div class="capture-examples" id="capture-examples">
+            <span>Try</span>
+            <button type="button" class="capture-example">Call the dentist tomorrow at 10</button>
+            <button type="button" class="capture-example">Remember to renew my passport</button>
+            <button type="button" class="capture-example">Every Monday, water the plants</button>
+            <button type="button" class="capture-example">Look at this later</button>
+          </div>
+
+          <div class="capture-detected" id="capture-detected" hidden>
+            <div class="capture-chips" id="capture-chips"></div>
+            <div class="capture-alt" id="capture-alt" hidden></div>
+          </div>
+
+          <div class="capture-done" id="capture-done" hidden>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+            <span id="capture-done-label"></span>
+          </div>
+        </div>
       </div>
 
       <div class="voice-review" id="voice-review" hidden>
@@ -186,6 +208,7 @@
             </select>
           </label>
         </div>
+        <p class="capture-hint-line" id="task-composer-hint" hidden></p>
       </div>
 
       <div class="task-controls">
@@ -219,8 +242,7 @@
 
           <div class="saved-panel">
             <div class="aside-title"><p class="eyebrow">SAVED FOR LATER</p></div>
-            <a href="#">Compare energy tariffs <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg></a>
-            <a href="#">Easy weeknight dinners <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg></a>
+            <div id="saved-for-later-list"></div>
           </div>
         </aside>
       </div>
