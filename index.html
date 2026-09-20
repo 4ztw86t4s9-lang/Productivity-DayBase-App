@@ -34,19 +34,25 @@
     <section class="view-panel active" id="view-today" data-panel="today">
 
       <div class="today-intro">
-        <p class="eyebrow">TODAY · FRIDAY, 20 SEPTEMBER</p>
-        <h1>Good afternoon, Jamie.</h1>
-        <p>Here's what needs your attention.</p>
-        <span class="core-idea">Daybase turns everything that needs your attention into one simple plan.</span>
+        <p class="eyebrow" id="today-eyebrow">TODAY · FRIDAY, 20 SEPTEMBER</p>
+        <h1 id="today-greeting">Good afternoon, Jamie.</h1>
+        <p id="today-subtitle">Here's what needs your attention.</p>
       </div>
 
-      <button class="tell-daybase" id="voice-trigger" type="button">
-        <span class="voice-orb">
+      <div class="today-progress" id="today-progress" hidden>
+        <span id="today-progress-label">0 of 0 done today</span>
+        <div class="today-progress-track"><div class="today-progress-fill" id="today-progress-bar"></div></div>
+      </div>
+
+      <div class="quick-capture">
+        <input type="text" id="quick-add-input" placeholder="Add something for today…" autocomplete="off">
+        <button type="button" id="quick-add-submit" class="quick-capture-submit" aria-label="Add task">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+        </button>
+        <button type="button" id="voice-trigger" class="quick-capture-mic voice-orb" aria-label="Tell Daybase">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3Z"/><path d="M19 11a7 7 0 0 1-14 0"/><path d="M12 18v3"/></svg>
-        </span>
-        <span><strong>Tell Daybase</strong><small>Speak naturally. Daybase turns the jumble into a clear plan.</small></span>
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
-      </button>
+        </button>
+      </div>
 
       <div class="voice-review" id="voice-review" hidden>
         <div class="panel-head">
@@ -64,46 +70,40 @@
 
         <div class="section-block">
           <div class="section-title">
-            <div><p class="eyebrow">TODAY</p><h2>Your day</h2></div>
-            <span>2 commitments</span>
-          </div>
-          <div class="timeline">
-            <div class="timeline-event">
-              <time>2:00PM<span>In 2 hours</span></time>
-              <div class="timeline-line"></div>
-              <div>
-                <strong>Dentist</strong>
-                <small>High Street Dental</small>
-                <a href="#"><svg viewBox="0 0 24 24" width="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s-7-6.1-7-11a7 7 0 1 1 14 0c0 4.9-7 11-7 11Z"/><circle cx="12" cy="10" r="2.5"/></svg>Directions</a>
-              </div>
-            </div>
-            <div class="timeline-event">
-              <time>5:30PM<span>Closes at 6 PM</span></time>
-              <div class="timeline-line"></div>
-              <div>
-                <strong>Pick up dry cleaning</strong>
-                <small>Regal Dry Cleaners</small>
-                <a href="#"><svg viewBox="0 0 24 24" width="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s-7-6.1-7-11a7 7 0 1 1 14 0c0 4.9-7 11-7 11Z"/><circle cx="12" cy="10" r="2.5"/></svg>Get directions</a>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div class="section-block">
-          <div class="section-title">
             <div>
               <p class="eyebrow">YOUR TOP 3</p>
               <h2>If you only get three things done today.</h2>
               <span class="section-support">The three things Daybase believes deserve your attention most.</span>
             </div>
-            <button class="quiet-button" type="button">Change</button>
+            <button class="quiet-button" type="button" id="top-three-change">Change</button>
           </div>
           <div class="top-three" id="top-three-list"></div>
         </div>
 
+        <div class="section-block">
+          <div class="list-heading"><h2>Everything else today</h2><span id="today-tasks-count">0 open</span></div>
+          <div class="task-list" id="today-tasks-list"></div>
+        </div>
+
+        <div class="section-block">
+          <div class="section-title">
+            <div><p class="eyebrow">TODAY</p><h2>Your day</h2></div>
+            <span id="today-events-count">0 commitments</span>
+          </div>
+          <div class="timeline" id="today-timeline-list"></div>
+        </div>
+
+        <div class="section-block" id="upcoming-block" hidden>
+          <div class="section-title">
+            <div><p class="eyebrow">LOOKING AHEAD</p><h2>Coming up</h2></div>
+            <button class="quiet-button" type="button" data-view="tasks">View all</button>
+          </div>
+          <div id="upcoming-list"></div>
+        </div>
+
         <div class="section-block found-section">
           <div class="found-heading">
-            <div><p class="eyebrow">DAYBASE FOUND 3 THINGS</p><h2>That may need your attention</h2></div>
+            <div><p class="eyebrow" id="today-found-count-label">DAYBASE FOUND 3 THINGS</p><h2>That may need your attention</h2></div>
             <button class="review-all" type="button" data-view="found">Review all
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
             </button>

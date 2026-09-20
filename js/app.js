@@ -17,6 +17,8 @@
     close: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>',
     repeat: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 2l4 4-4 4"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><path d="M7 22l-4-4 4-4"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>',
     more: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="12" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="19" cy="12" r="1.3"/></svg>',
+    pin: '<svg viewBox="0 0 24 24" width="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s-7-6.1-7-11a7 7 0 1 1 14 0c0 4.9-7 11-7 11Z"/><circle cx="12" cy="10" r="2.5"/></svg>',
+    plus: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>',
   };
 
   const TASK_ICON = { call: ICONS.call, link: ICONS.link, calendar: ICONS.calendar, plain: ICONS.dot };
@@ -25,7 +27,7 @@
   const nextId = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
 
   /* ---------- persistence (saved in this browser only) ---------- */
-  const STORAGE = { tasks: 'daybase:tasks', topThree: 'daybase:topThree' };
+  const STORAGE = { tasks: 'daybase:tasks', topThree: 'daybase:topThree', todayStats: 'daybase:todayStats' };
 
   function loadJSON(key, fallback) {
     try {
@@ -74,7 +76,15 @@
     dayIndex: 0,
     theme: localStorage.getItem('daybase:theme') || 'classic',
     accent: localStorage.getItem('daybase:accent') || 'classic',
+    todayStats: null,
   };
+
+  /* today's real calendar commitments — the single source of truth for both
+     the Today timeline and the Calendar view's "Today" agenda */
+  const TODAY_EVENTS = [
+    { time: '2:00PM', duration: '1 hour', untilLabel: 'In 2 hours', title: 'Dentist', location: 'High Street Dental', directionsLabel: 'Directions' },
+    { time: '5:30PM', duration: 'Before 6 PM', untilLabel: 'Closes at 6 PM', title: 'Pick up dry cleaning', location: 'Regal Dry Cleaners', directionsLabel: 'Get directions' },
+  ];
 
   const THEMES = [
     { key: 'classic', kicker: 'TODAY', heading: 'Good morning.', name: 'CLASSIC', tagline: 'Quiet luxury.' },
@@ -115,6 +125,101 @@
     el.addEventListener('click', () => setActiveView(el.dataset.view));
   });
 
+  /* ---------- today: derived views over the real task/event data ---------- */
+  function getTodaysTasks() {
+    return state.tasks.filter((t) => t.category === 'today' || t.due === 'Today');
+  }
+
+  function getOverdueTasks() {
+    return state.tasks.filter((t) => !t.done && t.warn);
+  }
+
+  function getUpcomingTasks() {
+    return state.tasks.filter((t) => !t.done && !t.warn && t.category !== 'today' && t.due !== 'Today').slice(0, 3);
+  }
+
+  function todayKey() {
+    return new Date().toDateString();
+  }
+
+  function ensureTodayStats() {
+    const key = todayKey();
+    const saved = loadJSON(STORAGE.todayStats, null);
+    if (saved && saved.date === key) return saved;
+    const fresh = {
+      date: key,
+      total: state.topThree.length + getTodaysTasks().filter((t) => !t.done).length,
+      done: 0,
+    };
+    saveJSON(STORAGE.todayStats, fresh);
+    return fresh;
+  }
+
+  function bumpTodayDone(delta) {
+    if (!state.todayStats) return;
+    state.todayStats.done = Math.max(0, Math.min(state.todayStats.total, state.todayStats.done + delta));
+    saveJSON(STORAGE.todayStats, state.todayStats);
+    renderProgressStrip();
+  }
+
+  function growTodayTotal(delta) {
+    if (!state.todayStats) return;
+    state.todayStats.total = Math.max(0, state.todayStats.total + delta);
+    saveJSON(STORAGE.todayStats, state.todayStats);
+    renderProgressStrip();
+  }
+
+  /* ---------- greeting, date and adaptive subtitle ---------- */
+  function formatEyebrowDate(d) {
+    const weekday = d.toLocaleDateString(undefined, { weekday: 'long' }).toUpperCase();
+    const month = d.toLocaleDateString(undefined, { month: 'long' }).toUpperCase();
+    return `TODAY · ${weekday}, ${d.getDate()} ${month}`;
+  }
+
+  function renderGreeting() {
+    const now = new Date();
+    const hour = now.getHours();
+    const greetingWord = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
+    $('#today-eyebrow').textContent = formatEyebrowDate(now);
+    $('#today-greeting').textContent = `${greetingWord}, Jamie.`;
+
+    const overdue = getOverdueTasks().length;
+    const openToday = getTodaysTasks().filter((t) => !t.done).length;
+    const eventsToday = TODAY_EVENTS.length;
+    const openTasks = openToday + state.topThree.length;
+    const totalLoad = openTasks + eventsToday;
+    const hasDoneSomething = state.todayStats && state.todayStats.done > 0;
+
+    let subtitle;
+    if (overdue > 0) {
+      subtitle = `${overdue} thing${overdue > 1 ? 's' : ''} slipped through — worth a look first.`;
+    } else if (openTasks === 0 && eventsToday === 0 && hasDoneSomething) {
+      subtitle = "You're all caught up for today.";
+    } else if (openTasks === 0 && eventsToday === 0) {
+      subtitle = 'Nothing on the books today. Enjoy the space.';
+    } else if (openTasks === 0 && hasDoneSomething) {
+      subtitle = 'Your to-dos are clear — just your calendar left today.';
+    } else if (totalLoad >= 6) {
+      subtitle = "It's a full day — here's where to start.";
+    } else {
+      subtitle = "Here's what needs your attention.";
+    }
+    $('#today-subtitle').textContent = subtitle;
+  }
+
+  function renderProgressStrip() {
+    const el = $('#today-progress');
+    const stats = state.todayStats;
+    if (!stats || stats.total <= 0) {
+      el.hidden = true;
+      return;
+    }
+    el.hidden = false;
+    const pct = Math.max(0, Math.min(100, Math.round((stats.done / stats.total) * 100)));
+    $('#today-progress-label').textContent = `${stats.done} of ${stats.total} done today`;
+    $('#today-progress-bar').style.width = `${pct}%`;
+  }
+
   /* ---------- top three ---------- */
   function renderTopThree() {
     const list = $('#top-three-list');
@@ -126,6 +231,7 @@
     state.topThree.forEach((item, i) => {
       const row = document.createElement('div');
       row.className = 'top-item';
+      row.dataset.id = item.id;
       row.innerHTML = `
         <button class="task-check" type="button" data-id="${item.id}" aria-label="Complete">${ICONS.circle}</button>
         <span class="top-number">${String(i + 1).padStart(2, '0')}</span>
@@ -139,16 +245,31 @@
   function completeTopThree(id) {
     const idx = state.topThree.findIndex((t) => t.id === id);
     if (idx === -1) return;
-    state.topThree.splice(idx, 1);
-    saveJSON(STORAGE.topThree, state.topThree);
-    renderTopThree();
+    const row = $(`.top-item[data-id="${id}"]`);
+    if (row) {
+      row.classList.add('completing');
+      const checkBtn = row.querySelector('.task-check');
+      if (checkBtn) checkBtn.innerHTML = ICONS.check;
+    }
+    bumpTodayDone(1);
     showToast('Nice work — one less thing.');
+    setTimeout(() => {
+      const idx2 = state.topThree.findIndex((t) => t.id === id);
+      if (idx2 !== -1) state.topThree.splice(idx2, 1);
+      saveJSON(STORAGE.topThree, state.topThree);
+      renderTopThree();
+      renderGreeting();
+    }, 420);
   }
+
+  $('#top-three-change').addEventListener('click', () => showToast('Choosing your own priorities is coming soon'));
 
   /* ---------- found ---------- */
   const SOURCE_ICON = { email: ICONS.mail, voice: ICONS.mic, calendar: ICONS.calendar };
 
   function renderTodayFound() {
+    const label = $('#today-found-count-label');
+    if (label) label.textContent = `DAYBASE FOUND ${state.found.length} THING${state.found.length === 1 ? '' : 'S'}`;
     const list = $('#today-found-list');
     list.innerHTML = '';
     state.found.forEach((item) => {
@@ -183,6 +304,36 @@
   });
 
   /* ---------- tasks ---------- */
+  function buildTaskRow(task) {
+    const row = document.createElement('div');
+    row.className = 'task-row' + (task.done ? ' done' : '');
+    const iconKey = task.done ? 'plain' : task.icon;
+    const showAction = !task.done && task.icon !== 'plain';
+    row.innerHTML = `
+      <button class="task-icon ${task.icon !== 'plain' ? task.icon : ''}" type="button" data-id="${task.id}" aria-label="Toggle done">
+        ${task.done ? ICONS.check : TASK_ICON[iconKey]}
+      </button>
+      <div class="task-copy">
+        <strong>${task.title}</strong>
+        <span>
+          ${task.warn && !task.done ? `<em>${task.due}</em>` : task.due ? `<b>${task.due}</b>` : ''}
+        </span>
+      </div>
+      ${showAction ? `<button class="task-action" type="button" data-action="${task.icon}" aria-label="Quick action">${TASK_ICON[task.icon]}</button>` : ''}
+      <button class="task-more" type="button" aria-label="More">${ICONS.more}</button>`;
+
+    row.querySelector('.task-icon').addEventListener('click', () => toggleTaskDone(task.id));
+    const actionBtn = row.querySelector('.task-action');
+    if (actionBtn) {
+      actionBtn.addEventListener('click', () => {
+        const messages = { call: 'Calling…', link: 'Opening link…', calendar: 'Added to calendar' };
+        showToast(messages[task.icon] || 'Done');
+      });
+    }
+    row.querySelector('.task-more').addEventListener('click', () => showToast('More options coming soon'));
+    return row;
+  }
+
   function renderTasks() {
     const list = $('#task-list');
     list.innerHTML = '';
@@ -196,38 +347,45 @@
     if (!visible.length) {
       list.innerHTML = `<div class="calm-empty">${ICONS.sparkle}<strong>Nothing here</strong><span>Try a different filter or add a task above.</span></div>`;
     } else {
-      visible.forEach((task) => {
-        const row = document.createElement('div');
-        row.className = 'task-row' + (task.done ? ' done' : '');
-        const iconKey = task.done ? 'plain' : task.icon;
-        const showAction = !task.done && task.icon !== 'plain';
-        row.innerHTML = `
-          <button class="task-icon ${task.icon !== 'plain' ? task.icon : ''}" type="button" data-id="${task.id}" aria-label="Toggle done">
-            ${task.done ? ICONS.check : TASK_ICON[iconKey]}
-          </button>
-          <div class="task-copy">
-            <strong>${task.title}</strong>
-            <span>
-              ${task.warn && !task.done ? `<em>${task.due}</em>` : task.due ? `<b>${task.due}</b>` : ''}
-            </span>
-          </div>
-          ${showAction ? `<button class="task-action" type="button" data-action="${task.icon}" aria-label="Quick action">${TASK_ICON[task.icon]}</button>` : ''}
-          <button class="task-more" type="button" aria-label="More">${ICONS.more}</button>`;
-
-        row.querySelector('.task-icon').addEventListener('click', () => toggleTaskDone(task.id));
-        const actionBtn = row.querySelector('.task-action');
-        if (actionBtn) {
-          actionBtn.addEventListener('click', () => {
-            const messages = { call: 'Calling…', link: 'Opening link…', calendar: 'Added to calendar' };
-            showToast(messages[task.icon] || 'Done');
-          });
-        }
-        row.querySelector('.task-more').addEventListener('click', () => showToast('More options coming soon'));
-        list.appendChild(row);
-      });
+      visible.forEach((task) => list.appendChild(buildTaskRow(task)));
     }
 
     $('#task-open-count').textContent = `${state.tasks.filter((t) => !t.done).length} open`;
+  }
+
+  function renderTodayTasks() {
+    const list = $('#today-tasks-list');
+    const items = getTodaysTasks();
+    list.innerHTML = '';
+    if (!items.length) {
+      list.innerHTML = `<div class="calm-empty">${ICONS.sparkle}<strong>Nothing else today</strong><span>Add something above, or enjoy the space.</span></div>`;
+    } else {
+      items.forEach((task) => list.appendChild(buildTaskRow(task)));
+    }
+    $('#today-tasks-count').textContent = `${items.filter((t) => !t.done).length} open`;
+  }
+
+  function renderUpcoming() {
+    const block = $('#upcoming-block');
+    const items = getUpcomingTasks();
+    if (!items.length) {
+      block.hidden = true;
+      return;
+    }
+    block.hidden = false;
+    const list = $('#upcoming-list');
+    list.innerHTML = items
+      .map(
+        (t) => `
+      <button type="button" class="recurring-row" data-id="${t.id}">
+        ${TASK_ICON[t.icon] || ICONS.dot}
+        <span><strong>${t.title}</strong><small>${t.due}</small></span>
+      </button>`
+      )
+      .join('');
+    $$('.recurring-row', list).forEach((row) => {
+      row.addEventListener('click', () => setActiveView('tasks'));
+    });
   }
 
   function toggleTaskDone(id) {
@@ -235,15 +393,25 @@
     if (!task) return;
     task.done = !task.done;
     saveJSON(STORAGE.tasks, state.tasks);
+    const isToday = task.category === 'today' || task.due === 'Today';
+    if (isToday) bumpTodayDone(task.done ? 1 : -1);
     renderTasks();
+    renderTodayTasks();
+    renderUpcoming();
+    renderGreeting();
     if (task.done) showToast('Nice — marked done.');
   }
 
   function addTask(title, { category = 'general', due = null } = {}) {
     if (!title.trim()) return;
-    state.tasks.unshift({ id: nextId(), title: title.trim(), category, icon: 'plain', due, done: false });
+    const task = { id: nextId(), title: title.trim(), category, icon: 'plain', due, done: false };
+    state.tasks.unshift(task);
     saveJSON(STORAGE.tasks, state.tasks);
+    if (task.category === 'today' || task.due === 'Today') growTodayTotal(1);
     renderTasks();
+    renderTodayTasks();
+    renderUpcoming();
+    renderGreeting();
   }
 
   $$('#category-filters button').forEach((btn) => {
@@ -283,6 +451,19 @@
   $('#task-submit').addEventListener('click', submitTaskComposer);
   $('#task-input').addEventListener('keydown', (e) => {
     if (e.key === 'Enter') submitTaskComposer();
+  });
+
+  function submitQuickAdd() {
+    const input = $('#quick-add-input');
+    if (!input.value.trim()) return;
+    addTask(input.value, { category: 'today', due: 'Today' });
+    input.value = '';
+    showToast('Added to today');
+  }
+
+  $('#quick-add-submit').addEventListener('click', submitQuickAdd);
+  $('#quick-add-input').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') submitQuickAdd();
   });
 
   function renderRecurring() {
@@ -336,6 +517,28 @@
     });
   }
 
+  function renderTodayTimeline() {
+    const list = $('#today-timeline-list');
+    const countEl = $('#today-events-count');
+    if (countEl) countEl.textContent = `${TODAY_EVENTS.length} commitment${TODAY_EVENTS.length === 1 ? '' : 's'}`;
+    if (!TODAY_EVENTS.length) {
+      list.innerHTML = `<div class="calm-empty">${ICONS.calendar}<strong>No commitments today</strong><span>Your calendar is clear.</span></div>`;
+      return;
+    }
+    list.innerHTML = TODAY_EVENTS.map(
+      (ev) => `
+      <div class="timeline-event">
+        <time>${ev.time}<span>${ev.untilLabel}</span></time>
+        <div class="timeline-line"></div>
+        <div>
+          <strong>${ev.title}</strong>
+          <small>${ev.location}</small>
+          <a href="#">${ICONS.pin}${ev.directionsLabel}</a>
+        </div>
+      </div>`
+    ).join('');
+  }
+
   function renderAgenda() {
     const isToday = state.dayIndex === 0;
     $('#agenda-day-title').textContent = isToday ? 'Today' : WEEKDAY_SHORT[DAYS[state.dayIndex].getDay()];
@@ -345,24 +548,18 @@
       list.innerHTML = `<div class="calm-empty">${ICONS.calendar}<strong>Nothing scheduled</strong><span>Enjoy the space in your day.</span></div>`;
       return;
     }
-    $('#agenda-count').textContent = '2 events';
-    list.innerHTML = `
+    $('#agenda-count').textContent = `${TODAY_EVENTS.length} event${TODAY_EVENTS.length === 1 ? '' : 's'}`;
+    list.innerHTML = TODAY_EVENTS.map(
+      (ev) => `
       <article>
-        <time>2:00PM<span>1 hour</span></time>
+        <time>${ev.time}<span>${ev.duration}</span></time>
         <div>
-          <strong>Dentist</strong>
-          <small>High Street Dental</small>
-          <a href="#">${ICONS.mail.replace('<svg', '<svg width="13"')}<span>Directions</span></a>
+          <strong>${ev.title}</strong>
+          <small>${ev.location}</small>
+          <a href="#">${ICONS.pin}<span>${ev.directionsLabel}</span></a>
         </div>
-      </article>
-      <article>
-        <time>5:30PM<span>Before 6 PM</span></time>
-        <div>
-          <strong>Pick up dry cleaning</strong>
-          <small>Regal Dry Cleaners</small>
-          <a href="#">${ICONS.mail.replace('<svg', '<svg width="13"')}<span>Directions</span></a>
-        </div>
-      </article>`;
+      </article>`
+    ).join('');
   }
 
   $('.calendar-add').addEventListener('click', () => showToast('Add-to-calendar coming soon'));
@@ -498,7 +695,14 @@
 
   /* ---------- init ---------- */
   function init() {
+    state.todayStats = ensureTodayStats();
+
+    renderGreeting();
+    renderProgressStrip();
     renderTopThree();
+    renderTodayTasks();
+    renderTodayTimeline();
+    renderUpcoming();
     renderTodayFound();
     renderFoundView();
     renderTasks();
