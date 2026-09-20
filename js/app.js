@@ -1167,74 +1167,287 @@
   $$('#accent-options button').forEach((btn) => btn.addEventListener('click', () => applyAccent(btn.dataset.accent)));
 
   /* ---------- voice / tell daybase ----------
-     Uses the browser's real Web Speech API (SpeechRecognition) — there is no
-     server or AI service involved. Whatever gets transcribed is run through
-     the same deterministic parseCapture() used for typed input, so a voice
-     capture lands exactly where typing the same words would. */
+     Chrome/Edge use the browser's built-in Web Speech API (SpeechRecognition)
+     directly. Safari doesn't implement that at all, so browsers without it
+     fall back to a real, fully on-device speech-to-text model (Whisper, via
+     transformers.js) — recorded audio never leaves the device, there's no
+     server and no API key involved. Either way, whatever gets transcribed is
+     run through the same deterministic parseCapture() used for typed input,
+     so a voice capture lands exactly where typing the same words would. */
   const trigger = $('#voice-trigger');
   const voiceReview = $('#voice-review');
   const SpeechRecognitionImpl = window.SpeechRecognition || window.webkitSpeechRecognition;
   let recognizer = null;
+  let fallbackRecorder = null;
+  let whisperPipelinePromise = null;
+  let voiceFallbackSession = 0;
   let voiceDrafts = [];
 
   function buildVoiceDraft(transcript) {
     return { id: nextId(), transcript, parsed: parseCapture(transcript) };
   }
 
+  // Loads the on-device Whisper model the first time it's needed, then
+  // reuses it — the browser also caches the downloaded model files, so this
+  // is only a real download on the very first use per browser.
+  function getWhisperPipeline() {
+    if (!whisperPipelinePromise) {
+      whisperPipelinePromise = (async () => {
+        const { pipeline } = await import('https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.0.2');
+        return pipeline('automatic-speech-recognition', 'onnx-community/whisper-tiny.en', {
+          progress_callback: (p) => {
+            // The model can be warming up in the background while the
+            // person is still recording (started as soon as they tapped the
+            // mic) — never let its progress overwrite "Listening…" mid-talk.
+            if (fallbackRecorder && fallbackRecorder.state === 'recording') return;
+            if (p.status === 'progress' && typeof p.progress === 'number') {
+              $('#voice-status').textContent = `Downloading voice model — ${Math.round(p.progress)}%`;
+            } else if (p.status === 'ready') {
+              $('#voice-status').textContent = 'Transcribing…';
+            }
+          },
+        });
+      })();
+    }
+    return whisperPipelinePromise;
+  }
+
+  // Decodes a recorded audio Blob (whatever format the browser recorded —
+  // Safari uses audio/mp4, others usually audio/webm) into the 16kHz mono
+  // Float32 PCM samples Whisper expects.
+  async function blobToPCM16k(blob) {
+    const AudioContextImpl = window.AudioContext || window.webkitAudioContext;
+    const arrayBuffer = await blob.arrayBuffer();
+    const decodeCtx = new AudioContextImpl();
+    const decoded = await decodeCtx.decodeAudioData(arrayBuffer);
+    decodeCtx.close();
+    const targetRate = 16000;
+    const offlineCtx = new OfflineAudioContext(1, Math.ceil(decoded.duration * targetRate), targetRate);
+    const source = offlineCtx.createBufferSource();
+    source.buffer = decoded;
+    source.connect(offlineCtx.destination);
+    source.start();
+    const rendered = await offlineCtx.startRendering();
+    return rendered.getChannelData(0);
+  }
+
   function startListening() {
     voiceReview.hidden = false;
+    $('#voice-review-title').textContent = 'Tell Daybase';
     $('#voice-tasks').innerHTML = '';
     voiceDrafts = [];
     $('#voice-add-all').disabled = true;
     trigger.classList.add('listening');
-    $('#voice-status').textContent = 'Listening…';
+    $('#voice-status').textContent = 'Requesting microphone access…';
 
-    recognizer = new SpeechRecognitionImpl();
-    recognizer.lang = document.documentElement.lang || 'en-US';
-    recognizer.interimResults = false;
-    recognizer.maxAlternatives = 1;
+    let micStream = null;
+    let safetyTimer = null;
 
-    recognizer.addEventListener('result', (e) => {
-      const transcript = e.results[0][0].transcript.trim();
-      if (transcript) {
-        voiceDrafts = [buildVoiceDraft(transcript)];
-        $('#voice-status').textContent = "Here's what I heard:";
-      } else {
-        $('#voice-status').textContent = "Didn't catch that — try again.";
-      }
-      renderVoiceDrafts();
-    });
-    recognizer.addEventListener('error', (e) => {
-      const messages = {
-        'not-allowed': 'Microphone access was blocked — allow it in your browser settings to use voice capture.',
-        'no-speech': "Didn't hear anything — try again when you're ready.",
-        'audio-capture': 'No microphone was found on this device.',
-      };
-      $('#voice-status').textContent = messages[e.error] || "Voice capture couldn't start — try typing instead.";
-    });
-    recognizer.addEventListener('end', () => {
+    function stopListeningUI() {
+      clearTimeout(safetyTimer);
       trigger.classList.remove('listening');
       $('#voice-add-all').disabled = !voiceDrafts.length;
-    });
-
-    try {
-      recognizer.start();
-    } catch {
-      trigger.classList.remove('listening');
-      $('#voice-status').textContent = "Voice capture couldn't start — try again.";
+      if (micStream) {
+        micStream.getTracks().forEach((track) => track.stop());
+        micStream = null;
+      }
     }
+
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      $('#voice-status').textContent = "This browser can't access the microphone — try typing instead.";
+      stopListeningUI();
+      return;
+    }
+
+    // Explicitly ask for the microphone first. This is what actually shows
+    // the browser's permission prompt and gives clear, standard error names
+    // to react to — relying on SpeechRecognition to request it implicitly
+    // was inconsistent across browsers and could fail without any prompt
+    // ever appearing.
+    navigator.mediaDevices
+      .getUserMedia({ audio: true })
+      .then((stream) => {
+        micStream = stream;
+        $('#voice-status').textContent = 'Listening…';
+
+        // Some browsers never fire result/error/end once recognition has
+        // actually started (a broken implementation) — this guarantees the
+        // UI always recovers instead of looking stuck forever.
+        safetyTimer = setTimeout(() => {
+          $('#voice-status').textContent = "Didn't hear anything — try again when you're ready.";
+          if (recognizer) { try { recognizer.abort(); } catch { /* already stopped */ } }
+          stopListeningUI();
+        }, 8000);
+
+        try {
+          recognizer = new SpeechRecognitionImpl();
+          recognizer.lang = document.documentElement.lang || 'en-US';
+          recognizer.interimResults = false;
+          recognizer.maxAlternatives = 1;
+
+          recognizer.addEventListener('result', (e) => {
+            const transcript = e.results[0][0].transcript.trim();
+            if (transcript) {
+              voiceDrafts = [buildVoiceDraft(transcript)];
+              $('#voice-review-title').textContent = "Here's what I heard";
+              $('#voice-status').textContent = "Here's what I heard:";
+            } else {
+              $('#voice-status').textContent = "Didn't catch that — try again.";
+            }
+            renderVoiceDrafts();
+          });
+          recognizer.addEventListener('error', (e) => {
+            const messages = {
+              'not-allowed': 'Microphone access was blocked — allow it in your browser settings to use voice capture.',
+              'no-speech': "Didn't hear anything — try again when you're ready.",
+              'audio-capture': 'No microphone was found on this device.',
+              network: "Couldn't reach the speech service — check your connection and try again.",
+            };
+            $('#voice-status').textContent = messages[e.error] || "Voice capture couldn't start — try typing instead.";
+            stopListeningUI();
+          });
+          recognizer.addEventListener('end', stopListeningUI);
+
+          recognizer.start();
+        } catch {
+          $('#voice-status').textContent = "Voice capture couldn't start — try again.";
+          stopListeningUI();
+        }
+      })
+      .catch((err) => {
+        const messages = {
+          NotAllowedError: 'Microphone access was blocked — allow it in your browser settings to use voice capture.',
+          NotFoundError: 'No microphone was found on this device.',
+          NotReadableError: 'Your microphone is being used by another app.',
+          SecurityError: "This page can't access the microphone here.",
+        };
+        $('#voice-status').textContent = messages[err.name] || "Couldn't access your microphone — try again.";
+        stopListeningUI();
+      });
+  }
+
+  // The fallback path for browsers without SpeechRecognition (Safari): the
+  // person taps the mic once to start recording and again to stop — there's
+  // no native "it heard enough, stop now" signal here, so the person is in
+  // control of the length of the clip, capped for safety.
+  function startListeningFallback() {
+    const mySession = ++voiceFallbackSession;
+    voiceReview.hidden = false;
+    $('#voice-review-title').textContent = 'Tell Daybase';
+    $('#voice-tasks').innerHTML = '';
+    voiceDrafts = [];
+    $('#voice-add-all').disabled = true;
+    trigger.classList.add('listening');
+    $('#voice-status').textContent = 'Requesting microphone access…';
+
+    let micStream = null;
+    let maxDurationTimer = null;
+
+    function stopListeningUI() {
+      clearTimeout(maxDurationTimer);
+      trigger.classList.remove('listening');
+      $('#voice-add-all').disabled = !voiceDrafts.length;
+      if (micStream) {
+        micStream.getTracks().forEach((track) => track.stop());
+        micStream = null;
+      }
+      fallbackRecorder = null;
+    }
+
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      $('#voice-status').textContent = "This browser can't access the microphone — try typing instead.";
+      stopListeningUI();
+      return;
+    }
+
+    navigator.mediaDevices
+      .getUserMedia({ audio: true })
+      .then((stream) => {
+        micStream = stream;
+
+        const mimeType = ['audio/mp4', 'audio/webm', 'audio/ogg'].find((t) => MediaRecorder.isTypeSupported(t));
+        const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+        fallbackRecorder = recorder;
+        const chunks = [];
+
+        recorder.addEventListener('dataavailable', (e) => {
+          if (e.data.size) chunks.push(e.data);
+        });
+        recorder.addEventListener('stop', async () => {
+          stopListeningUI();
+          if (mySession !== voiceFallbackSession) return; // superseded (panel closed or a new recording started)
+          if (!chunks.length) {
+            $('#voice-status').textContent = "Didn't hear anything — try again when you're ready.";
+            renderVoiceDrafts();
+            return;
+          }
+          $('#voice-status').textContent = 'Transcribing…';
+          try {
+            const blob = new Blob(chunks, { type: mimeType || 'audio/webm' });
+            const pcm = await blobToPCM16k(blob);
+            const asr = await getWhisperPipeline();
+            const out = await asr(pcm);
+            if (mySession !== voiceFallbackSession) return; // superseded while transcribing
+            const transcript = (out.text || '').trim();
+            if (transcript) {
+              voiceDrafts = [buildVoiceDraft(transcript)];
+              $('#voice-review-title').textContent = "Here's what I heard";
+              $('#voice-status').textContent = "Here's what I heard:";
+            } else {
+              $('#voice-status').textContent = "Didn't catch that — try again.";
+            }
+          } catch {
+            if (mySession !== voiceFallbackSession) return;
+            $('#voice-status').textContent = "Couldn't transcribe that — try again.";
+          }
+          renderVoiceDrafts();
+        });
+
+        $('#voice-status').textContent = 'Listening… tap the mic again when done';
+        recorder.start();
+        // Start loading the model in the background right away, so it's
+        // already downloading (or ready, on a repeat use) by the time the
+        // person finishes talking.
+        getWhisperPipeline().catch(() => {});
+
+        maxDurationTimer = setTimeout(() => {
+          if (recorder.state === 'recording') recorder.stop();
+        }, 20000);
+      })
+      .catch((err) => {
+        const messages = {
+          NotAllowedError: 'Microphone access was blocked — allow it in your browser settings to use voice capture.',
+          NotFoundError: 'No microphone was found on this device.',
+          NotReadableError: 'Your microphone is being used by another app.',
+          SecurityError: "This page can't access the microphone here.",
+        };
+        $('#voice-status').textContent = messages[err.name] || "Couldn't access your microphone — try again.";
+        stopListeningUI();
+      });
   }
 
   trigger.addEventListener('click', () => {
     if (trigger.classList.contains('listening')) {
       if (recognizer) recognizer.stop();
+      if (fallbackRecorder && fallbackRecorder.state === 'recording') fallbackRecorder.stop();
       return;
     }
-    if (!SpeechRecognitionImpl) {
-      showToast("Voice capture isn't supported in this browser yet — try typing instead.");
+    if (SpeechRecognitionImpl) {
+      startListening();
       return;
     }
-    startListening();
+    if (typeof MediaRecorder !== 'undefined' && navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+      startListeningFallback();
+      return;
+    }
+    // A toast alone fades in ~2s and is easy to miss, and this needs to sit
+    // still until read — this browser has neither SpeechRecognition nor a
+    // way to record audio for the on-device fallback.
+    voiceReview.hidden = false;
+    $('#voice-review-title').textContent = 'Tell Daybase';
+    $('#voice-tasks').innerHTML = '';
+    $('#voice-add-all').disabled = true;
+    $('#voice-status').textContent = "Voice capture isn't supported in this browser yet — try typing instead.";
   });
 
   function renderVoiceDrafts() {
@@ -1279,7 +1492,9 @@
   });
 
   $('#voice-close').addEventListener('click', () => {
+    voiceFallbackSession++; // invalidate any in-flight fallback transcription
     if (recognizer) recognizer.stop();
+    if (fallbackRecorder && fallbackRecorder.state === 'recording') fallbackRecorder.stop();
     trigger.classList.remove('listening');
     voiceReview.hidden = true;
     voiceDrafts = [];
