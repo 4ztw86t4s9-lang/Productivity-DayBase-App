@@ -1189,39 +1189,53 @@
     trigger.classList.add('listening');
     $('#voice-status').textContent = 'Listening…';
 
-    recognizer = new SpeechRecognitionImpl();
-    recognizer.lang = document.documentElement.lang || 'en-US';
-    recognizer.interimResults = false;
-    recognizer.maxAlternatives = 1;
+    // Some browsers never fire result/error/end on a broken mic or blocked
+    // permission (the failure mode this was built to fix: the button looks
+    // stuck "listening" forever). This guarantees the UI always recovers.
+    const safetyTimer = setTimeout(() => {
+      $('#voice-status').textContent = "Didn't hear anything — try again when you're ready.";
+      stopListeningUI();
+      if (recognizer) { try { recognizer.abort(); } catch { /* already stopped */ } }
+    }, 8000);
 
-    recognizer.addEventListener('result', (e) => {
-      const transcript = e.results[0][0].transcript.trim();
-      if (transcript) {
-        voiceDrafts = [buildVoiceDraft(transcript)];
-        $('#voice-status').textContent = "Here's what I heard:";
-      } else {
-        $('#voice-status').textContent = "Didn't catch that — try again.";
-      }
-      renderVoiceDrafts();
-    });
-    recognizer.addEventListener('error', (e) => {
-      const messages = {
-        'not-allowed': 'Microphone access was blocked — allow it in your browser settings to use voice capture.',
-        'no-speech': "Didn't hear anything — try again when you're ready.",
-        'audio-capture': 'No microphone was found on this device.',
-      };
-      $('#voice-status').textContent = messages[e.error] || "Voice capture couldn't start — try typing instead.";
-    });
-    recognizer.addEventListener('end', () => {
+    function stopListeningUI() {
+      clearTimeout(safetyTimer);
       trigger.classList.remove('listening');
       $('#voice-add-all').disabled = !voiceDrafts.length;
-    });
+    }
 
     try {
+      recognizer = new SpeechRecognitionImpl();
+      recognizer.lang = document.documentElement.lang || 'en-US';
+      recognizer.interimResults = false;
+      recognizer.maxAlternatives = 1;
+
+      recognizer.addEventListener('result', (e) => {
+        const transcript = e.results[0][0].transcript.trim();
+        if (transcript) {
+          voiceDrafts = [buildVoiceDraft(transcript)];
+          $('#voice-status').textContent = "Here's what I heard:";
+        } else {
+          $('#voice-status').textContent = "Didn't catch that — try again.";
+        }
+        renderVoiceDrafts();
+      });
+      recognizer.addEventListener('error', (e) => {
+        const messages = {
+          'not-allowed': 'Microphone access was blocked — allow it in your browser settings to use voice capture.',
+          'no-speech': "Didn't hear anything — try again when you're ready.",
+          'audio-capture': 'No microphone was found on this device.',
+          network: "Couldn't reach the speech service — check your connection and try again.",
+        };
+        $('#voice-status').textContent = messages[e.error] || "Voice capture couldn't start — try typing instead.";
+        stopListeningUI();
+      });
+      recognizer.addEventListener('end', stopListeningUI);
+
       recognizer.start();
     } catch {
-      trigger.classList.remove('listening');
       $('#voice-status').textContent = "Voice capture couldn't start — try again.";
+      stopListeningUI();
     }
   }
 
