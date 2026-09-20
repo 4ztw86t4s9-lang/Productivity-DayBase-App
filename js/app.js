@@ -1187,56 +1187,91 @@
     voiceDrafts = [];
     $('#voice-add-all').disabled = true;
     trigger.classList.add('listening');
-    $('#voice-status').textContent = 'Listening…';
+    $('#voice-status').textContent = 'Requesting microphone access…';
 
-    // Some browsers never fire result/error/end on a broken mic or blocked
-    // permission (the failure mode this was built to fix: the button looks
-    // stuck "listening" forever). This guarantees the UI always recovers.
-    const safetyTimer = setTimeout(() => {
-      $('#voice-status').textContent = "Didn't hear anything — try again when you're ready.";
-      stopListeningUI();
-      if (recognizer) { try { recognizer.abort(); } catch { /* already stopped */ } }
-    }, 8000);
+    let micStream = null;
+    let safetyTimer = null;
 
     function stopListeningUI() {
       clearTimeout(safetyTimer);
       trigger.classList.remove('listening');
       $('#voice-add-all').disabled = !voiceDrafts.length;
+      if (micStream) {
+        micStream.getTracks().forEach((track) => track.stop());
+        micStream = null;
+      }
     }
 
-    try {
-      recognizer = new SpeechRecognitionImpl();
-      recognizer.lang = document.documentElement.lang || 'en-US';
-      recognizer.interimResults = false;
-      recognizer.maxAlternatives = 1;
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      $('#voice-status').textContent = "This browser can't access the microphone — try typing instead.";
+      stopListeningUI();
+      return;
+    }
 
-      recognizer.addEventListener('result', (e) => {
-        const transcript = e.results[0][0].transcript.trim();
-        if (transcript) {
-          voiceDrafts = [buildVoiceDraft(transcript)];
-          $('#voice-status').textContent = "Here's what I heard:";
-        } else {
-          $('#voice-status').textContent = "Didn't catch that — try again.";
+    // Explicitly ask for the microphone first. This is what actually shows
+    // the browser's permission prompt and gives clear, standard error names
+    // to react to — relying on SpeechRecognition to request it implicitly
+    // was inconsistent across browsers and could fail without any prompt
+    // ever appearing.
+    navigator.mediaDevices
+      .getUserMedia({ audio: true })
+      .then((stream) => {
+        micStream = stream;
+        $('#voice-status').textContent = 'Listening…';
+
+        // Some browsers never fire result/error/end once recognition has
+        // actually started (a broken implementation) — this guarantees the
+        // UI always recovers instead of looking stuck forever.
+        safetyTimer = setTimeout(() => {
+          $('#voice-status').textContent = "Didn't hear anything — try again when you're ready.";
+          if (recognizer) { try { recognizer.abort(); } catch { /* already stopped */ } }
+          stopListeningUI();
+        }, 8000);
+
+        try {
+          recognizer = new SpeechRecognitionImpl();
+          recognizer.lang = document.documentElement.lang || 'en-US';
+          recognizer.interimResults = false;
+          recognizer.maxAlternatives = 1;
+
+          recognizer.addEventListener('result', (e) => {
+            const transcript = e.results[0][0].transcript.trim();
+            if (transcript) {
+              voiceDrafts = [buildVoiceDraft(transcript)];
+              $('#voice-status').textContent = "Here's what I heard:";
+            } else {
+              $('#voice-status').textContent = "Didn't catch that — try again.";
+            }
+            renderVoiceDrafts();
+          });
+          recognizer.addEventListener('error', (e) => {
+            const messages = {
+              'not-allowed': 'Microphone access was blocked — allow it in your browser settings to use voice capture.',
+              'no-speech': "Didn't hear anything — try again when you're ready.",
+              'audio-capture': 'No microphone was found on this device.',
+              network: "Couldn't reach the speech service — check your connection and try again.",
+            };
+            $('#voice-status').textContent = messages[e.error] || "Voice capture couldn't start — try typing instead.";
+            stopListeningUI();
+          });
+          recognizer.addEventListener('end', stopListeningUI);
+
+          recognizer.start();
+        } catch {
+          $('#voice-status').textContent = "Voice capture couldn't start — try again.";
+          stopListeningUI();
         }
-        renderVoiceDrafts();
-      });
-      recognizer.addEventListener('error', (e) => {
+      })
+      .catch((err) => {
         const messages = {
-          'not-allowed': 'Microphone access was blocked — allow it in your browser settings to use voice capture.',
-          'no-speech': "Didn't hear anything — try again when you're ready.",
-          'audio-capture': 'No microphone was found on this device.',
-          network: "Couldn't reach the speech service — check your connection and try again.",
+          NotAllowedError: 'Microphone access was blocked — allow it in your browser settings to use voice capture.',
+          NotFoundError: 'No microphone was found on this device.',
+          NotReadableError: 'Your microphone is being used by another app.',
+          SecurityError: "This page can't access the microphone here.",
         };
-        $('#voice-status').textContent = messages[e.error] || "Voice capture couldn't start — try typing instead.";
+        $('#voice-status').textContent = messages[err.name] || "Couldn't access your microphone — try again.";
         stopListeningUI();
       });
-      recognizer.addEventListener('end', stopListeningUI);
-
-      recognizer.start();
-    } catch {
-      $('#voice-status').textContent = "Voice capture couldn't start — try again.";
-      stopListeningUI();
-    }
   }
 
   trigger.addEventListener('click', () => {
