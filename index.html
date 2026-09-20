@@ -20,7 +20,7 @@
 
     <nav class="desktop-nav" aria-label="Primary">
       <button type="button" class="active" data-view="today">Today</button>
-      <button type="button" data-view="found">Found<b id="nav-found-badge">3</b></button>
+      <button type="button" data-view="found">Found<b id="nav-found-badge">5</b></button>
       <button type="button" data-view="tasks">Tasks</button>
       <button type="button" data-view="calendar">Calendar</button>
     </nav>
@@ -85,7 +85,7 @@
         </div>
         <p class="voice-status" id="voice-status">Listening…</p>
         <div class="voice-tasks" id="voice-tasks"></div>
-        <button class="primary-button full" id="voice-add-all" type="button">Add to my plan</button>
+        <button class="primary-button full" id="voice-add-all" type="button" disabled>Add to my plan</button>
       </div>
 
       <div class="today-layout">
@@ -144,30 +144,25 @@
     <section class="view-panel" id="view-found" data-panel="found">
       <div class="page-intro">
         <p class="eyebrow">DAYBASE FOUND</p>
-        <h1>Things that may need you</h1>
-        <p>Not email management. A clear view of the things in your life that may require action.</p>
+        <h1>Capture now. Decide later.</h1>
+        <p>Everything you save, forward or say out loud lands here first — until you decide what it becomes.</p>
       </div>
 
       <div class="inbox-toolbar">
-        <div class="source-pills" id="source-pills">
-          <button type="button" class="active" data-source="all">All</button>
-          <button type="button" data-source="email">Email</button>
-          <button type="button" data-source="voice">Voice</button>
-        </div>
-        <span id="found-count">0 detected</span>
+        <span id="found-count">0 waiting</span>
       </div>
 
-      <div class="action-feed" id="action-feed">
-        <div class="calm-empty large">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v3M12 18v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M3 12h3M18 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/></svg>
-          <strong>No detected actions yet</strong>
-          <span>Connect an account to let Daybase find things automatically.</span>
-        </div>
-      </div>
+      <div class="found-groups" id="found-groups"></div>
+
+      <button type="button" class="text-button found-archived-toggle" id="found-archived-toggle" hidden>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="4" rx="1"/><path d="M5 8v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8"/><path d="M10 13h4"/></svg>
+        <span id="found-archived-toggle-label">Archived</span>
+      </button>
+      <div class="found-archived-list" id="found-archived-list" hidden></div>
 
       <div class="connect-strip">
         <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/></svg></span>
-        <div><strong>Connect Outlook for live actions</strong><small>Review real messages here instead of searching your inbox.</small></div>
+        <div><strong>Connect Outlook to catch things automatically</strong><small>Review real messages here instead of searching your inbox.</small></div>
         <button type="button" id="connect-outlook">Connect</button>
       </div>
     </section>
@@ -338,7 +333,7 @@
     <button type="button" data-view="found">
       <span class="nav-icon">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v3M12 18v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M3 12h3M18 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/></svg>
-        <b id="bottom-found-badge">3</b>
+        <b id="bottom-found-badge">5</b>
       </span>
       Found
     </button>

@@ -23,6 +23,9 @@
     note: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h9l5 5v11a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z"/><path d="M14 3v5h5M8 13h8M8 17h5"/></svg>',
     bookmark: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h12v18l-6-4-6 4Z"/></svg>',
     clock: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>',
+    archive: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="4" rx="1"/><path d="M5 8v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8"/><path d="M10 13h4"/></svg>',
+    trash: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16"/><path d="M10 11v6M14 11v6"/><path d="M6 7l1 13a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-13"/><path d="M9 7V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v3"/></svg>',
+    undo: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10h9a5 5 0 0 1 0 10h-2"/><path d="M7 6 3 10l4 4"/></svg>',
   };
 
   const TASK_ICON = { call: ICONS.call, link: ICONS.link, calendar: ICONS.calendar, plain: ICONS.dot };
@@ -48,6 +51,7 @@
     savedForLater: 'daybase:savedForLater',
     customEvents: 'daybase:customEvents',
     recurring: 'daybase:recurring',
+    found: 'daybase:found',
   };
 
   function loadJSON(key, fallback) {
@@ -91,13 +95,21 @@
     { title: 'Water the plants', freq: 'Every Sunday' },
   ];
 
+  /* Found: things captured throughout the day that haven't been decided on yet.
+     `category` drives which of the three groups a still-active item sits in;
+     `suggestion` is the one contextual action Daybase offers (only where a real
+     action exists to take — creating a task, adding to the calendar, or saving). */
+  const DEFAULT_FOUND = [
+    { id: nextId(), source: 'email', title: 'High Street Dental confirmed your appointment', body: 'Reply requested to confirm your 2 PM slot today.', category: 'action', suggestion: { action: 'task', label: 'Create task' }, status: 'new' },
+    { id: nextId(), source: 'voice', title: "Don't forget mum's birthday next week", body: 'Captured as a voice note, Tuesday 8:14 AM.', category: 'action', suggestion: { action: 'event', label: 'Add to calendar' }, due: 'Next week', status: 'new' },
+    { id: nextId(), source: 'calendar', title: 'Team sync and the Lisbon call both start at 3 PM Thursday', body: 'Two events overlap — worth resolving before Thursday.', category: 'action', suggestion: { action: 'task', label: 'Create task' }, status: 'new' },
+    { id: nextId(), source: 'link', title: 'Article: "How to run a calmer Monday standup"', body: 'Saved from Safari — worth a proper read when there’s time.', category: 'keep', suggestion: { action: 'save', label: 'Save' }, status: 'new' },
+    { id: nextId(), source: 'note', title: 'Idea: a weekend trip to the Lake District', body: 'Jotted down after a chat with Sam — nothing planned yet.', category: 'dismiss', suggestion: null, status: 'new' },
+  ];
+
   const state = {
     topThree: loadJSON(STORAGE.topThree, DEFAULT_TOP_THREE),
-    found: [
-      { id: nextId(), source: 'email', title: 'High Street Dental confirmed your appointment', body: 'Reply requested to confirm your 2 PM slot today.' },
-      { id: nextId(), source: 'voice', title: "Voice note: “Don't forget mum's birthday next week”", body: 'Captured Tuesday at 8:14 AM · Suggested: add reminder' },
-      { id: nextId(), source: 'calendar', title: 'Two events overlap on Thursday', body: 'Team sync and the Lisbon call both start at 3 PM' },
-    ],
+    found: loadJSON(STORAGE.found, DEFAULT_FOUND),
     tasks: loadJSON(STORAGE.tasks, DEFAULT_TASKS),
     recurring: loadJSON(STORAGE.recurring, DEFAULT_RECURRING),
     savedForLater: loadJSON(STORAGE.savedForLater, DEFAULT_SAVED_FOR_LATER),
@@ -401,18 +413,35 @@
   $('#top-three-change').addEventListener('click', () => showToast('Choosing your own priorities is coming soon'));
 
   /* ---------- found ---------- */
-  const SOURCE_ICON = { email: ICONS.mail, voice: ICONS.mic, calendar: ICONS.calendar };
+  const SOURCE_ICON = { email: ICONS.mail, voice: ICONS.mic, calendar: ICONS.calendar, link: ICONS.link, note: ICONS.note };
+  const FOUND_GROUPS = [
+    { key: 'action', title: 'Needs your attention' },
+    { key: 'keep', title: 'Worth keeping' },
+    { key: 'dismiss', title: "Might not need to stay" },
+  ];
+
+  function getFoundActive() {
+    return state.found.filter((f) => f.status !== 'archived');
+  }
+  function getFoundArchived() {
+    return state.found.filter((f) => f.status === 'archived');
+  }
 
   function renderTodayFound() {
+    const active = getFoundActive();
     const label = $('#today-found-count-label');
-    if (label) label.textContent = `DAYBASE FOUND ${state.found.length} THING${state.found.length === 1 ? '' : 'S'}`;
+    if (label) label.textContent = `DAYBASE FOUND ${active.length} THING${active.length === 1 ? '' : 'S'}`;
     const list = $('#today-found-list');
     list.innerHTML = '';
-    state.found.forEach((item) => {
+    if (!active.length) {
+      list.innerHTML = `<div class="calm-empty">${ICONS.sparkle}<strong>All clear</strong><span>Nothing waiting in Found right now.</span></div>`;
+      return;
+    }
+    active.slice(0, 3).forEach((item) => {
       const row = document.createElement('div');
       row.className = 'found-row';
       row.innerHTML = `
-        <span class="source-icon">${SOURCE_ICON[item.source]}</span>
+        <span class="source-icon">${SOURCE_ICON[item.source] || ICONS.dot}</span>
         <div><strong>${item.title}</strong><small>${item.body}</small></div>
         <button type="button">Review</button>`;
       row.querySelector('button').addEventListener('click', () => {
@@ -423,16 +452,132 @@
     });
   }
 
-  function renderFoundView() {
-    $('#found-count').textContent = `${state.found.length} detected`;
+  function buildFoundRow(item) {
+    const archived = item.status === 'archived';
+    const row = document.createElement('div');
+    row.className = 'found-row' + (archived ? ' is-archived' : '');
+    row.dataset.id = item.id;
+    const suggestBtn = !archived && item.suggestion
+      ? `<button type="button" class="found-suggest-btn" data-action="${item.suggestion.action}">${item.suggestion.label}</button>`
+      : '';
+    const secondaryBtns = archived
+      ? `<button type="button" class="found-icon-btn" data-action="restore" aria-label="Restore" title="Restore">${ICONS.undo}</button>
+         <button type="button" class="found-icon-btn" data-action="delete" aria-label="Delete" title="Delete">${ICONS.trash}</button>`
+      : `<button type="button" class="found-icon-btn" data-action="archive" aria-label="Archive" title="Archive">${ICONS.archive}</button>
+         <button type="button" class="found-icon-btn" data-action="delete" aria-label="Delete" title="Delete">${ICONS.trash}</button>`;
+    row.innerHTML = `
+      <span class="source-icon">${SOURCE_ICON[item.source] || ICONS.dot}</span>
+      <div><strong>${item.title}</strong><small>${archived ? (item.resolution || 'Archived') : item.body}</small></div>
+      <div class="found-row-actions">${suggestBtn}${secondaryBtns}</div>`;
+    $$('button[data-action]', row).forEach((btn) => {
+      btn.addEventListener('click', () => actOnFound(item, btn.dataset.action));
+    });
+    return row;
   }
 
-  $$('#source-pills button').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      $$('#source-pills button').forEach((b) => b.classList.toggle('active', b === btn));
-      state.filters.source = btn.dataset.source;
-      showToast(btn.dataset.source === 'all' ? 'Showing everything' : `Filtering by ${btn.dataset.source}`);
-    });
+  function actOnFound(item, action) {
+    switch (action) {
+      case 'task':
+        addTask(item.title, { category: item.due === 'Today' ? 'today' : 'general', due: item.due || 'No date' });
+        setFoundStatus(item.id, 'archived', 'Added as a task');
+        showToast('Added as a task');
+        break;
+      case 'event':
+        addCustomEvent({ title: item.title, due: item.due || 'Today' });
+        setFoundStatus(item.id, 'archived', 'Added to your calendar');
+        showToast('Added to your calendar');
+        break;
+      case 'save':
+        addSavedItem(item.title);
+        setFoundStatus(item.id, 'archived', 'Saved for later');
+        showToast('Saved for later');
+        break;
+      case 'archive':
+        setFoundStatus(item.id, 'archived', 'Archived');
+        showToast('Archived');
+        break;
+      case 'restore':
+        setFoundStatus(item.id, 'new', null);
+        showToast('Restored');
+        break;
+      case 'delete':
+        deleteFoundItem(item.id);
+        showToast('Deleted');
+        break;
+    }
+  }
+
+  function setFoundStatus(id, status, resolution) {
+    const item = state.found.find((f) => f.id === id);
+    if (!item) return;
+    item.status = status;
+    item.resolution = resolution;
+    saveJSON(STORAGE.found, state.found);
+    renderFoundView();
+    renderTodayFound();
+    renderFoundBadges();
+  }
+
+  function deleteFoundItem(id) {
+    state.found = state.found.filter((f) => f.id !== id);
+    saveJSON(STORAGE.found, state.found);
+    renderFoundView();
+    renderTodayFound();
+    renderFoundBadges();
+  }
+
+  function renderFoundBadges() {
+    const n = getFoundActive().length;
+    const label = n ? String(n) : '';
+    const navBadge = $('#nav-found-badge');
+    if (navBadge) navBadge.textContent = label;
+    const bottomBadge = $('#bottom-found-badge');
+    if (bottomBadge) bottomBadge.textContent = label;
+  }
+
+  function renderFoundView() {
+    const active = getFoundActive();
+    const archived = getFoundArchived();
+    $('#found-count').textContent = `${active.length} waiting`;
+
+    const groupsEl = $('#found-groups');
+    if (!active.length) {
+      groupsEl.innerHTML = `<div class="calm-empty large">${ICONS.sparkle}<strong>${archived.length ? 'All clear' : 'Nothing here yet'}</strong><span>${archived.length ? 'Nothing waiting to be sorted right now.' : 'Save a link, jot a voice note, or type something above — it lands here first.'}</span></div>`;
+    } else {
+      groupsEl.innerHTML = '';
+      FOUND_GROUPS.forEach((g) => {
+        const items = active.filter((f) => f.category === g.key);
+        if (!items.length) return;
+        const group = document.createElement('div');
+        group.className = 'found-group';
+        group.innerHTML = `<div class="list-heading"><h2>${g.title}</h2><span>${items.length}</span></div>`;
+        const list = document.createElement('div');
+        list.className = 'found-list';
+        items.forEach((item) => list.appendChild(buildFoundRow(item)));
+        group.appendChild(list);
+        groupsEl.appendChild(group);
+      });
+    }
+
+    const toggle = $('#found-archived-toggle');
+    const archivedList = $('#found-archived-list');
+    if (!archived.length) {
+      toggle.hidden = true;
+      archivedList.hidden = true;
+      archivedList.innerHTML = '';
+    } else {
+      toggle.hidden = false;
+      $('#found-archived-toggle-label').textContent = `Archived (${archived.length})`;
+      if (!archivedList.hidden) {
+        archivedList.innerHTML = '';
+        archived.forEach((item) => archivedList.appendChild(buildFoundRow(item)));
+      }
+    }
+  }
+
+  $('#found-archived-toggle').addEventListener('click', () => {
+    $('#found-archived-list').hidden = !$('#found-archived-list').hidden;
+    renderFoundView();
   });
 
   $('#connect-outlook').addEventListener('click', () => {
@@ -1021,63 +1166,120 @@
 
   $$('#accent-options button').forEach((btn) => btn.addEventListener('click', () => applyAccent(btn.dataset.accent)));
 
-  /* ---------- voice / tell daybase ---------- */
+  /* ---------- voice / tell daybase ----------
+     Uses the browser's real Web Speech API (SpeechRecognition) — there is no
+     server or AI service involved. Whatever gets transcribed is run through
+     the same deterministic parseCapture() used for typed input, so a voice
+     capture lands exactly where typing the same words would. */
   const trigger = $('#voice-trigger');
   const voiceReview = $('#voice-review');
+  const SpeechRecognitionImpl = window.SpeechRecognition || window.webkitSpeechRecognition;
+  let recognizer = null;
   let voiceDrafts = [];
 
-  trigger.addEventListener('click', () => {
-    trigger.classList.add('listening');
-    $('#voice-status').textContent = 'Listening…';
+  function buildVoiceDraft(transcript) {
+    return { id: nextId(), transcript, parsed: parseCapture(transcript) };
+  }
+
+  function startListening() {
     voiceReview.hidden = false;
     $('#voice-tasks').innerHTML = '';
-    setTimeout(() => {
-      trigger.classList.remove('listening');
-      $('#voice-status').textContent = 'I picked up 2 tasks:';
-      voiceDrafts = [
-        { id: nextId(), title: 'Call the plumber', category: 'Home', due: 'Tomorrow' },
-        { id: nextId(), title: 'Pick up a birthday card for mum', category: 'Home', due: 'This week' },
-      ];
+    voiceDrafts = [];
+    $('#voice-add-all').disabled = true;
+    trigger.classList.add('listening');
+    $('#voice-status').textContent = 'Listening…';
+
+    recognizer = new SpeechRecognitionImpl();
+    recognizer.lang = document.documentElement.lang || 'en-US';
+    recognizer.interimResults = false;
+    recognizer.maxAlternatives = 1;
+
+    recognizer.addEventListener('result', (e) => {
+      const transcript = e.results[0][0].transcript.trim();
+      if (transcript) {
+        voiceDrafts = [buildVoiceDraft(transcript)];
+        $('#voice-status').textContent = "Here's what I heard:";
+      } else {
+        $('#voice-status').textContent = "Didn't catch that — try again.";
+      }
       renderVoiceDrafts();
-    }, 1300);
+    });
+    recognizer.addEventListener('error', (e) => {
+      const messages = {
+        'not-allowed': 'Microphone access was blocked — allow it in your browser settings to use voice capture.',
+        'no-speech': "Didn't hear anything — try again when you're ready.",
+        'audio-capture': 'No microphone was found on this device.',
+      };
+      $('#voice-status').textContent = messages[e.error] || "Voice capture couldn't start — try typing instead.";
+    });
+    recognizer.addEventListener('end', () => {
+      trigger.classList.remove('listening');
+      $('#voice-add-all').disabled = !voiceDrafts.length;
+    });
+
+    try {
+      recognizer.start();
+    } catch {
+      trigger.classList.remove('listening');
+      $('#voice-status').textContent = "Voice capture couldn't start — try again.";
+    }
+  }
+
+  trigger.addEventListener('click', () => {
+    if (trigger.classList.contains('listening')) {
+      if (recognizer) recognizer.stop();
+      return;
+    }
+    if (!SpeechRecognitionImpl) {
+      showToast("Voice capture isn't supported in this browser yet — try typing instead.");
+      return;
+    }
+    startListening();
   });
 
   function renderVoiceDrafts() {
     const wrap = $('#voice-tasks');
     if (!voiceDrafts.length) {
-      wrap.innerHTML = `<p class="aside-empty">Nothing left to add.</p>`;
+      wrap.innerHTML = `<p class="aside-empty">Nothing to add yet.</p>`;
+      $('#voice-add-all').disabled = true;
       return;
     }
-    wrap.innerHTML = voiceDrafts.map((d) => `
+    wrap.innerHTML = voiceDrafts.map((d) => {
+      const meta = TYPE_META[d.parsed.type];
+      const details = [d.parsed.due, d.parsed.time, d.parsed.recurring].filter(Boolean).join(' · ');
+      return `
       <div class="voice-draft" data-id="${d.id}">
         <span class="draft-check">${ICONS.check}</span>
         <div>
-          <input type="text" value="${d.title}">
-          <span><b>${d.category}</b><em>${d.due}</em></span>
+          <input type="text" value="${d.parsed.title}">
+          <span><b>${meta.label}</b>${details ? `<em>${details}</em>` : ''}</span>
         </div>
         <button type="button" aria-label="Remove">${ICONS.close}</button>
-      </div>`).join('');
+      </div>`;
+    }).join('');
     $$('.voice-draft', wrap).forEach((row) => {
       row.querySelector('input').addEventListener('input', (e) => {
         const draft = voiceDrafts.find((d) => d.id === row.dataset.id);
-        if (draft) draft.title = e.target.value;
+        if (draft) draft.parsed.title = e.target.value;
       });
       row.querySelector('button').addEventListener('click', () => {
         voiceDrafts = voiceDrafts.filter((d) => d.id !== row.dataset.id);
         renderVoiceDrafts();
       });
     });
+    $('#voice-add-all').disabled = false;
   }
 
   $('#voice-add-all').addEventListener('click', () => {
     const count = voiceDrafts.length;
-    voiceDrafts.forEach((d) => addTask(d.title, { category: 'home', due: d.due }));
+    voiceDrafts.forEach((d) => commitCapture(d.parsed, d.parsed.type));
     voiceDrafts = [];
     voiceReview.hidden = true;
-    if (count) showToast(`Added ${count} task${count === 1 ? '' : 's'} to your list.`);
+    if (count) showToast(`Added ${count} thing${count === 1 ? '' : 's'} to your plan.`);
   });
 
   $('#voice-close').addEventListener('click', () => {
+    if (recognizer) recognizer.stop();
     trigger.classList.remove('listening');
     voiceReview.hidden = true;
     voiceDrafts = [];
@@ -1122,6 +1324,7 @@
     renderUpcoming();
     renderTodayFound();
     renderFoundView();
+    renderFoundBadges();
     renderTasks();
     renderRecurring();
     renderSavedForLater();
