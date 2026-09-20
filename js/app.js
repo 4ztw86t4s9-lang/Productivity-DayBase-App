@@ -1183,6 +1183,7 @@
 
   function startListening() {
     voiceReview.hidden = false;
+    $('#voice-review-title').textContent = 'Tell Daybase';
     $('#voice-tasks').innerHTML = '';
     voiceDrafts = [];
     $('#voice-add-all').disabled = true;
@@ -1238,6 +1239,7 @@
             const transcript = e.results[0][0].transcript.trim();
             if (transcript) {
               voiceDrafts = [buildVoiceDraft(transcript)];
+              $('#voice-review-title').textContent = "Here's what I heard";
               $('#voice-status').textContent = "Here's what I heard:";
             } else {
               $('#voice-status').textContent = "Didn't catch that — try again.";
@@ -1280,7 +1282,14 @@
       return;
     }
     if (!SpeechRecognitionImpl) {
-      showToast("Voice capture isn't supported in this browser yet — try typing instead.");
+      // A toast alone fades in ~2s and is easy to miss — Safari (desktop and
+      // iOS) doesn't implement speech-to-text at all, so this needs to be a
+      // message that sits still until the person reads it, not a flash.
+      voiceReview.hidden = false;
+      $('#voice-review-title').textContent = 'Tell Daybase';
+      $('#voice-tasks').innerHTML = '';
+      $('#voice-add-all').disabled = true;
+      $('#voice-status').textContent = "Voice capture needs Chrome or Edge — Safari doesn't support it yet. Type your task instead.";
       return;
     }
     startListening();
