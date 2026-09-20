@@ -22,27 +22,50 @@
   const TASK_ICON = { call: ICONS.call, link: ICONS.link, calendar: ICONS.calendar, plain: ICONS.dot };
 
   /* ---------- state ---------- */
-  let uid = 100;
-  const nextId = () => String(++uid);
+  const nextId = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+
+  /* ---------- persistence (saved in this browser only) ---------- */
+  const STORAGE = { tasks: 'daybase:tasks', topThree: 'daybase:topThree' };
+
+  function loadJSON(key, fallback) {
+    try {
+      const raw = localStorage.getItem(key);
+      return raw ? JSON.parse(raw) : fallback;
+    } catch {
+      return fallback;
+    }
+  }
+
+  function saveJSON(key, value) {
+    try {
+      localStorage.setItem(key, JSON.stringify(value));
+    } catch {
+      /* storage unavailable (private mode, etc.) — app still works, just won't remember */
+    }
+  }
+
+  const DEFAULT_TOP_THREE = [
+    { id: nextId(), title: 'Reply to Sarah about the Henderson proposal', subtitle: "She's waiting on your go-ahead" },
+    { id: nextId(), title: 'Finish the Q3 budget deck', subtitle: "Due before Monday's review" },
+    { id: nextId(), title: 'Pick up dry cleaning before 6 PM', subtitle: 'Regal Dry Cleaners closes at 6' },
+  ];
+
+  const DEFAULT_TASKS = [
+    { id: nextId(), title: 'Review the client proposal doc', category: 'work', icon: 'link', due: 'Today', done: false },
+    { id: nextId(), title: "Call the vet about Bramble's check-up", category: 'home', icon: 'call', due: 'Tomorrow', done: false },
+    { id: nextId(), title: 'Book flights for the Lisbon trip', category: 'work', icon: 'calendar', due: 'This week', done: false },
+    { id: nextId(), title: 'Pick up dry cleaning', category: 'today', icon: 'plain', due: 'Today', done: false },
+    { id: nextId(), title: 'Renew car insurance', category: 'home', icon: 'plain', due: 'Overdue', warn: true, done: false },
+  ];
 
   const state = {
-    topThree: [
-      { id: nextId(), title: 'Reply to Sarah about the Henderson proposal', subtitle: "She's waiting on your go-ahead" },
-      { id: nextId(), title: 'Finish the Q3 budget deck', subtitle: "Due before Monday's review" },
-      { id: nextId(), title: 'Pick up dry cleaning before 6 PM', subtitle: 'Regal Dry Cleaners closes at 6' },
-    ],
+    topThree: loadJSON(STORAGE.topThree, DEFAULT_TOP_THREE),
     found: [
       { id: nextId(), source: 'email', title: 'High Street Dental confirmed your appointment', body: 'Reply requested to confirm your 2 PM slot today.' },
       { id: nextId(), source: 'voice', title: "Voice note: “Don't forget mum's birthday next week”", body: 'Captured Tuesday at 8:14 AM · Suggested: add reminder' },
       { id: nextId(), source: 'calendar', title: 'Two events overlap on Thursday', body: 'Team sync and the Lisbon call both start at 3 PM' },
     ],
-    tasks: [
-      { id: nextId(), title: 'Review the client proposal doc', category: 'work', icon: 'link', due: 'Today', done: false },
-      { id: nextId(), title: "Call the vet about Bramble's check-up", category: 'home', icon: 'call', due: 'Tomorrow', done: false },
-      { id: nextId(), title: 'Book flights for the Lisbon trip', category: 'work', icon: 'calendar', due: 'This week', done: false },
-      { id: nextId(), title: 'Pick up dry cleaning', category: 'today', icon: 'plain', due: 'Today', done: false },
-      { id: nextId(), title: 'Renew car insurance', category: 'home', icon: 'plain', due: 'Overdue', warn: true, done: false },
-    ],
+    tasks: loadJSON(STORAGE.tasks, DEFAULT_TASKS),
     recurring: [
       { title: 'Bins out', freq: 'Every Wednesday' },
       { title: 'Water the plants', freq: 'Every Sunday' },
@@ -117,6 +140,7 @@
     const idx = state.topThree.findIndex((t) => t.id === id);
     if (idx === -1) return;
     state.topThree.splice(idx, 1);
+    saveJSON(STORAGE.topThree, state.topThree);
     renderTopThree();
     showToast('Nice work — one less thing.');
   }
@@ -210,6 +234,7 @@
     const task = state.tasks.find((t) => t.id === id);
     if (!task) return;
     task.done = !task.done;
+    saveJSON(STORAGE.tasks, state.tasks);
     renderTasks();
     if (task.done) showToast('Nice — marked done.');
   }
@@ -217,6 +242,7 @@
   function addTask(title, { category = 'general', due = null } = {}) {
     if (!title.trim()) return;
     state.tasks.unshift({ id: nextId(), title: title.trim(), category, icon: 'plain', due, done: false });
+    saveJSON(STORAGE.tasks, state.tasks);
     renderTasks();
   }
 
